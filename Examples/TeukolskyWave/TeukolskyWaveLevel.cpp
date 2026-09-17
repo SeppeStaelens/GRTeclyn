@@ -5,16 +5,20 @@
 
 #include "TeukolskyWaveLevel.hpp"
 
+#include "AMRReductions.hpp"
 #include "AlgebraicConstraintsEnforcer.hpp"
 #include "CCZ4RHS.hpp"
 #include "Constraints.hpp"
 #include "EppleyPacket.hpp"
+#include "FilesystemTools.hpp"
 #include "FixedGridsTagger.hpp"
 #include "FourthOrderDerivatives.hpp"
+#include "GRParmParse.hpp"
 #include "GammaCalculator.hpp"
 #include "IntegratedMovingPunctureGauge.hpp"
 #include "PositiveChiAndLapse.hpp"
 #include "SixthOrderDerivatives.hpp"
+#include "SmallDataIO.hpp"
 #include "StateTypes.hpp"
 #include "TeukolskyWaveInitialData.hpp"
 #include "Weyl4.hpp"
@@ -76,6 +80,50 @@ void TeukolskyWaveLevel::specific_post_timestep()
                                          first_step, restart_time);
             my_extraction.execute_query(&get_tw_amr_ptr()->m_weyl_interpolator);
         }
+    }
+    GRParmParse pp;
+    bool store_constraint_norms = false;
+    pp.query("diagnostic.store_constraint_norms", store_constraint_norms);
+    if (store_constraint_norms && Level() == 0)
+    {
+        const amrex::Real time         = get_state_data(state_index).curTime();
+        const amrex::Real dt           = get_gr_amr_ptr()->dtLevel(Level());
+        const amrex::Real restart_time = get_gr_amr_ptr()->get_restart_time();
+        const bool first_step          = (time <= dt);
+
+        const auto constraints_mf =
+            get_gr_amr_ptr()->derive(Constraints::name, time, 0);
+        const auto &amr = *get_gr_amr_ptr();
+
+        amrex::Vector<amrex::Geometry> geometries;
+        geometries.reserve(constraints_mf.size());
+        for (int level = 0; level <= amr.finestLevel(); ++level)
+        {
+            geometries.push_back(amr.Geom(level));
+        }
+
+        // Component 0 is Ham; components 1..AMREX_SPACEDIM are Mom1-3 (see
+        // Constraints::var_names), combined into a single Mom L2 norm. Both
+        // norms are computed in a single pass over the grid.
+        const auto [ham_l2_norm, mom_l2_norm] =
+            AMRReductions::volumeWeightedL2Norm(constraints_mf, 0, 1, 1,
+                                                AMREX_SPACEDIM, geometries,
+                                                amr.refRatio());
+
+        std::string output_path;
+        pp.get("grteclyn.output_path", output_path);
+        const std::string diagnostics_path = output_path + "/diagnostics";
+        FilesystemTools::ensure_directory_exists(diagnostics_path);
+
+        SmallDataIO constraints_file(diagnostics_path + "/constraint_norms", dt,
+                                     time, restart_time, SmallDataIO::APPEND,
+                                     first_step);
+        if (first_step)
+        {
+            constraints_file.write_header_line({"L2_Ham", "L2_Mom"});
+        }
+        constraints_file.write_time_data_line(
+            std::vector<amrex::Real>{ham_l2_norm, mom_l2_norm});
     }
 }
 

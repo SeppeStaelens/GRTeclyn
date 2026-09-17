@@ -22,6 +22,11 @@ amr.plot_int = 50
 amr.plot_vars = Weyl4_Re Weyl4_Im
 amr.derive_plot_vars = constraints
 
+# Write the volume-weighted L2 norms of the Hamiltonian and momentum
+# constraints to <grteclyn.output_path>/diagnostics/constraint_norms.dat after
+# each coarse timestep.
+diagnostic.store_constraint_norms = true
+
 #################################################
 # Teukolsky Wave parameters
 
